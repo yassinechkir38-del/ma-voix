@@ -65,7 +65,7 @@ export default function EnregistreurVoix({ voixEnregistree, onVoixEnregistree })
     if (!fichier) return
     setMessage(null)
     try {
-      preparerApercu(await convertirEnWav(fichier))
+      preparerApercu(await convertirEnWav(fichier, DUREE_MAX))
     } catch {
       setMessage({ type: 'erreur', texte: 'Ce fichier audio ne peut pas être lu.' })
     }
@@ -82,7 +82,11 @@ export default function EnregistreurVoix({ voixEnregistree, onVoixEnregistree })
     const formulaire = new FormData()
     formulaire.append('audio', apercu.blob, 'ma_voix.wav')
     try {
-      const reponse = await fetch('/api/voix', { method: 'POST', body: formulaire })
+      const reponse = await fetch('/api/voix', {
+        method: 'POST',
+        headers: { 'X-Ma-Voix': '1' }, // en-tete exige par le backend (anti autres sites)
+        body: formulaire,
+      })
       const donnees = await reponse.json()
       if (!reponse.ok) throw new Error(donnees.erreur)
       setMessage({ type: 'ok', texte: `${donnees.message} (${donnees.duree} s)` })

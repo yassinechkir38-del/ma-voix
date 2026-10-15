@@ -55,7 +55,7 @@ export default function GenerateurMessage({ langues, actif }) {
       // 1. On demande au backend de lancer la generation
       const reponse = await fetch('/api/generer', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Ma-Voix': '1' },
         body: JSON.stringify({ texte, langue, expressivite, qualite }),
       })
       const tache = await reponse.json().catch(() => ({}))

@@ -1,12 +1,17 @@
 // Convertit n'importe quel audio (enregistrement du micro, MP3, M4A...) en fichier WAV.
 // Le navigateur sait decoder ces formats, on n'a donc pas besoin d'installer ffmpeg.
+// Garde au plus dureeMax secondes (le serveur refuse les fichiers de plus de 8 Mo).
 // Renvoie { blob, duree } (duree en secondes).
 
-export async function convertirEnWav(blob) {
+export async function convertirEnWav(blob, dureeMax = 30) {
   const contexte = new AudioContext()
   try {
     const tampon = await contexte.decodeAudioData(await blob.arrayBuffer())
-    return { blob: encoderWav(versMono(tampon), tampon.sampleRate), duree: tampon.duration }
+    const echantillons = versMono(tampon).slice(0, Math.round(dureeMax * tampon.sampleRate))
+    return {
+      blob: encoderWav(echantillons, tampon.sampleRate),
+      duree: echantillons.length / tampon.sampleRate,
+    }
   } finally {
     contexte.close()
   }
