@@ -145,3 +145,86 @@ def test_sorties_nom_refuse(client, nom):
 def test_tache_inconnue(client):
     assert client.get("/api/taches/inconnue").status_code == 404
     assert client.get("/api/taches/inconnue/morceaux/0").status_code == 404
+
+
+# --- Version GPU (Colab) : tunnel + jeton secret (MV-7) ------------------------------------
+
+JETON_TEST = "j" * 43
+HOTE_TUNNEL = "essai-tunnel.trycloudflare.com"
+
+
+@pytest.fixture
+def client_tunnel(client, monkeypatch):
+    monkeypatch.setattr(module_app, "HOTES_AUTORISES", module_app.HOTES_AUTORISES | {HOTE_TUNNEL})
+    monkeypatch.setattr(module_app, "JETON", JETON_TEST)
+    return client
+
+
+def test_jeton_absent_refuse(client_tunnel):
+    reponse = client_tunnel.get("/api/statut", headers={"Host": HOTE_TUNNEL})
+    assert reponse.status_code == 403
+
+
+@pytest.mark.parametrize("jeton", ["mauvais", JETON_TEST[:-1], JETON_TEST + "x", "é" * 43, ""])
+def test_jeton_faux_refuse(client_tunnel, jeton):
+    reponse = client_tunnel.get("/api/statut", headers={"Host": HOTE_TUNNEL, "X-Ma-Voix-Jeton": jeton})
+    assert reponse.status_code == 403
+
+
+def test_jeton_dans_l_url_refuse(client_tunnel):
+    # SEC-3 : le jeton ne compte que dans l'en-tete, jamais dans l'adresse
+    reponse = client_tunnel.get(f"/api/statut?jeton={JETON_TEST}", headers={"Host": HOTE_TUNNEL})
+    assert reponse.status_code == 403
+
+
+def test_jeton_exige_partout(client_tunnel):
+    # Aussi sur les fichiers audio (ta voix, les messages) et meme depuis la machine elle-meme
+    for route in ["/api/voix", "/api/sorties/message_20261015_141325.wav", "/api/taches/x"]:
+        assert client_tunnel.get(route, headers={"Host": HOTE_TUNNEL}).status_code == 403
+    assert client_tunnel.get("/api/statut").status_code == 403
+
+
+def test_jeton_correct_accepte(client_tunnel):
+    reponse = client_tunnel.get("/api/statut", headers={"Host": HOTE_TUNNEL, "X-Ma-Voix-Jeton": JETON_TEST})
+    assert reponse.status_code == 200
+
+
+def test_jeton_correct_mais_post_sans_entete_refuse(client_tunnel):
+    entetes = {"Host": HOTE_TUNNEL, "X-Ma-Voix-Jeton": JETON_TEST}
+    assert client_tunnel.post("/api/generer", json=DEMANDE_VALIDE, headers=entetes).status_code == 403
+    entetes["X-Ma-Voix"] = "1"
+    assert client_tunnel.post("/api/generer", json=DEMANDE_VALIDE, headers=entetes).status_code == 503
+
+
+def test_jeton_correct_mais_hote_etranger_refuse(client_tunnel):
+    entetes = {"Host": "pirate.trycloudflare.com", "X-Ma-Voix-Jeton": JETON_TEST}
+    assert client_tunnel.get("/api/statut", headers=entetes).status_code == 403
+
+
+# --- Lecture des variables d'environnement : refuser de demarrer si c'est dangereux ----------
+
+def test_configuration_locale_par_defaut():
+    hotes, jeton = module_app.lire_configuration({})
+    assert hotes == module_app.HOTES_LOCAUX
+    assert jeton is None
+
+
+def test_configuration_tunnel_valide():
+    hotes, jeton = module_app.lire_configuration(
+        {"MA_VOIX_HOTES": f" {HOTE_TUNNEL.upper()} , ", "MA_VOIX_JETON": JETON_TEST}
+    )
+    assert hotes == module_app.HOTES_LOCAUX | {HOTE_TUNNEL}
+    assert jeton == JETON_TEST
+
+
+@pytest.mark.parametrize("environ", [
+    {"MA_VOIX_HOTES": HOTE_TUNNEL},  # hote en plus sans jeton
+    {"MA_VOIX_HOTES": HOTE_TUNNEL, "MA_VOIX_JETON": ""},
+    {"MA_VOIX_HOTES": HOTE_TUNNEL, "MA_VOIX_JETON": "trop-court"},
+    {"MA_VOIX_HOTES": HOTE_TUNNEL, "MA_VOIX_JETON": "é" * 43},
+    {"MA_VOIX_HOTES": "*", "MA_VOIX_JETON": JETON_TEST},
+    {"MA_VOIX_HOTES": "https://abc.trycloudflare.com", "MA_VOIX_JETON": JETON_TEST},
+])
+def test_configuration_dangereuse_refusee(environ):
+    with pytest.raises(RuntimeError):
+        module_app.lire_configuration(environ)

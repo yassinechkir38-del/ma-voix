@@ -3,7 +3,8 @@
 Transforme n'importe quel texte en message vocal **avec ta propre voix**.
 Tu t'enregistres une fois (~15 secondes), puis tu tapes un texte : l'IA le lit avec ta voix.
 
-Tout tourne **en local** sur ton PC : ta voix n'est jamais envoyée sur Internet.
+Par défaut, tout tourne **en local** sur ton PC : ta voix n'est jamais envoyée sur Internet.
+(Exception : la [version rapide sur GPU](#-version-rapide-sur-gpu-colab), qui tourne chez Google Colab.)
 
 ## Comment ça marche
 
@@ -25,13 +26,15 @@ avec Chatterbox ; la page joue chaque phrase des qu'elle arrive, sans attendre l
   sans entraînement.
 - **Backend** (`backend/`) :
   - `app.py` — l'API Flask (statut, enregistrement de la voix, génération).
-  - `moteur.py` — charge le modèle, découpe les textes en phrases, colle les morceaux audio,
-    et en mode « Précision maximale » garde la version la plus ressemblante.
+  - `moteur.py` — charge le modèle (sur la carte graphique s'il y en a une, sinon sur le
+    processeur), découpe les textes en phrases, colle les morceaux audio, et en mode
+    « Précision maximale » garde la version la plus ressemblante.
   - `preparation.py` — nettoie ton enregistrement (silences, souffle, volume) et mesure sa qualité.
 - **Frontend** (`frontend/src/`) :
   - `EnregistreurVoix.jsx` — enregistrement au micro (ou import d'un fichier), écoute, envoi.
   - `GenerateurMessage.jsx` — zone de texte, langue, expressivité, lecteur + téléchargement.
   - `audio.js` — convertit l'enregistrement du navigateur en WAV (pas besoin de ffmpeg).
+- **Colab** (`colab/ma_voix_gpu.ipynb`) — le notebook de la version rapide sur GPU.
 
 ## Lancer l'application
 
@@ -105,6 +108,9 @@ la ressemblance de la voix générée passe de **0,77 à 0,81–0,87**.
 D'un essai à l'autre, la ressemblance varie (0,81 à 0,87 sur le même texte) : la précision
 maximale évite les mauvais tirages.
 
+Sur carte graphique (Colab), « Rapide » utilise déjà 10 étapes : il donne le même son que
+« Haute qualité ».
+
 ## Conseils pour un bon clonage
 
 - Enregistre-toi **au calme**, sans musique ni ventilateur, à ~20 cm du micro.
@@ -115,6 +121,115 @@ maximale évite les mauvais tirages.
 - 10 à 20 secondes suffisent (le modèle n'utilise que les 10 premières).
 - **Expressivité** : 0.5 = naturel ; plus haut = plus d'émotion (mais parfois moins stable).
 - Écris la ponctuation : les points et virgules donnent les pauses.
+
+## ⚡ Version rapide sur GPU (Colab)
+
+Ton PC n'a pas de carte graphique : une phrase prend plus d'une minute. **Google Colab** prête
+gratuitement un ordinateur avec une carte graphique NVIDIA T4, où chaque phrase devrait sortir
+en quelques secondes (pas encore mesuré). Il te faut seulement un compte Google.
+
+> ⚠️ **Vie privée.** Dans cette version, ta voix et tes textes **quittent ton PC** : ils sont
+> envoyés sur un ordinateur de Google pendant la session, et en mode B ils passent aussi par le
+> tunnel de Cloudflare (chiffré en HTTPS). Tout est effacé à la fin de la session Colab, ou tout de
+> suite avec **Exécution → Déconnecter et supprimer l'environnement d'exécution**.
+> Si tu ne veux pas que ta voix sorte de ton PC, garde la version locale.
+
+**Les règles de Colab à connaître :**
+
+- Les *deepfakes* sont interdits : clone **uniquement ta propre voix**.
+- Avec Colab **gratuit**, il faut utiliser le notebook lui-même (**mode A**). Passer surtout par
+  une page web (**mode B**, ta page habituelle) y est interdit : Google peut couper la session
+  sans prévenir. Le mode B est fait pour un compte Colab avec des unités de calcul (payant).
+- Une session gratuite dure au maximum 12 heures, et s'arrête plus tôt si tu ne touches plus
+  au notebook. Ton ordinateur Colab repart de zéro à chaque session (il faut réinstaller et
+  renvoyer ta voix).
+
+### Étape 1 — Ouvrir le notebook
+
+1. Ouvre ce lien dans ton navigateur :
+   https://colab.research.google.com/github/yassinechkir38-del/ma-voix/blob/main/colab/ma_voix_gpu.ipynb
+2. Connecte-toi avec ton compte Google si on te le demande.
+3. Menu **Exécution → Modifier le type d'exécution** : vérifie que **GPU T4** est choisi,
+   puis **Enregistrer**.
+
+### Étape 2 — Installer et démarrer (cellules 1, 2 et 3)
+
+Une « cellule » est un bloc du notebook. Pour la lancer, clique sur le bouton **▶** à sa gauche,
+puis attends le **✓ vert** avant de passer à la suivante.
+
+1. **Cellule 1** : ▶. Si Colab affiche « ce notebook n'a pas été créé par Google », clique sur
+   **Exécuter quand même**. Tu dois voir `✅ Carte graphique trouvée`.
+2. **Cellule 2** : ▶, puis attends 3 à 5 minutes. Tu dois voir `✅ Installation terminée`.
+3. **Cellule 3** : laisse le mode **A - dans le notebook** et clique sur ▶. La première fois,
+   le modèle (~3 Go) se télécharge. Tu dois voir `✅ Modèle prêt`.
+
+### Étape 3 (mode A) — Créer tes messages dans le notebook
+
+1. **Cellule 4** : coche la case **c_est_ma_voix**, clique sur ▶, puis sur **Parcourir…**
+   (ou **Choisir des fichiers**) et choisis un enregistrement de ta voix de 10 à 20 secondes.
+   Tous les formats marchent. Si tu as déjà utilisé ma-voix sur ton PC, ta voix nettoyée est ici :
+   `Documents\dev\ma-voix\backend\voix\ma_voix.wav`.
+2. **Cellule 5** : écris ton texte dans le champ **texte**, choisis la langue, puis ▶.
+   Le message se joue dans le notebook et se télécharge sur ton PC.
+3. Pour un autre message : change le texte et clique de nouveau sur ▶ (cellule 5 seulement).
+
+### Mode B — Avec ta page habituelle (compte Colab payant)
+
+1. Dans la **cellule 3**, choisis **B - avec ma page (tunnel)** et clique sur ▶.
+   À la fin, elle affiche deux lignes qui ressemblent à ça :
+
+   ```
+   VITE_API_URL=https://mots-au-hasard-1234.trycloudflare.com
+   MA_VOIX_JETON=un-long-code-secret
+   ```
+
+2. Sur ton PC, ouvre **Git Bash** et va dans le dossier de la page :
+
+   ```bash
+   cd ~/Documents/dev/ma-voix/frontend
+   ```
+
+3. Ouvre (ou crée) le fichier `.env.local` avec le Bloc-notes :
+
+   ```bash
+   notepad .env.local
+   ```
+
+   Si le Bloc-notes demande s'il faut créer le fichier, réponds **Oui**. Colle les deux lignes
+   du notebook (en remplaçant les anciennes s'il y en a), enregistre avec **Ctrl+S** et ferme.
+
+4. Lance la page (pas besoin de lancer le backend sur ton PC) :
+
+   ```bash
+   npm run dev
+   ```
+
+5. Ouvre http://localhost:5173. En haut, tu dois voir **✅ Modèle prêt (carte graphique)**, et en
+   bas « Mode GPU ». Enregistre ta voix une fois (l'ordinateur Colab est vide au départ),
+   puis utilise la page comme d'habitude.
+
+**À chaque nouvelle session Colab** (ou si tu relances la cellule 3), l'adresse et le jeton
+changent : remplace les deux lignes dans `.env.local`, puis dans le terminal de `npm run dev`,
+appuie sur **Ctrl+C** et relance `npm run dev`. Si tu oublies, la page affiche
+« Accès refusé » ou « Colab injoignable ».
+
+Garde l'onglet Colab ouvert pendant que tu utilises la page.
+
+**Revenir à la version locale** : supprime le fichier `.env.local`,
+
+```bash
+rm .env.local
+```
+
+puis lance le backend et la page comme dans [Lancer l'application](#lancer-lapplication).
+
+**Pourquoi un jeton secret ?** Le tunnel rend le serveur Colab joignable depuis tout Internet.
+Sans le jeton, le serveur refuse toutes les requêtes. Le jeton reste dans `.env.local` sur ton PC
+(ce fichier n'est jamais envoyé sur GitHub) et c'est Vite qui l'ajoute à chaque requête : il
+n'apparaît jamais dans la page. Ne le partage avec personne. Détails : [SECURITE.md](SECURITE.md) (MV-7).
+
+> Le notebook télécharge le code depuis GitHub : une modification faite sur ton PC n'arrive sur
+> Colab qu'une fois envoyée sur GitHub (`git push`).
 
 ## Réinstaller (nouveau PC)
 

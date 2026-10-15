@@ -16,14 +16,19 @@ LONGUEUR_MAX_MORCEAU = 150
 # Le 1er morceau est plus court encore, pour entendre le debut le plus tot possible
 LONGUEUR_PREMIER_MORCEAU = 60
 
+# Carte graphique (GPU NVIDIA, par exemple sur Google Colab) si elle existe, sinon processeur
+SUR_GPU = torch.cuda.is_available()
+APPAREIL = "cuda" if SUR_GPU else "cpu"
+
 # Reglages de vitesse (mesures sur ton PC, sans carte graphique) :
 # - 4 threads = tes 4 coeurs physiques (8 ne va pas plus vite)
 # - etapes de generation du son : 5 = 2x plus rapide que 10, difference quasi inaudible
+# Sur GPU, 10 etapes sont deja rapides : on garde toujours la meilleure qualite.
 NB_THREADS = 4
 # Pour chaque mode de qualite : etapes de generation du son, et nombre d'essais par phrase.
 # En "precision", on genere plusieurs versions de chaque phrase et on garde celle qui
 # ressemble le plus a ta voix (mesure par l'empreinte vocale du modele).
-ETAPES_SON = {"rapide": 5, "max": 10, "precision": 10}
+ETAPES_SON = {"rapide": 10 if SUR_GPU else 5, "max": 10, "precision": 10}
 ESSAIS = {"rapide": 1, "max": 1, "precision": 3}
 
 
@@ -45,14 +50,18 @@ class Moteur:
     def charger(self):
         """Charge le modele (long : ~1 min, et telechargement de ~3 Go la 1ere fois)."""
         try:
-            torch.set_num_threads(NB_THREADS)
-            modele = ChatterboxMultilingualTTS.from_pretrained(device="cpu")
+            print(f"[moteur] Calcul sur : {torch.cuda.get_device_name(0) if SUR_GPU else 'processeur (CPU)'}")
+            if not SUR_GPU:
+                torch.set_num_threads(NB_THREADS)
+            modele = ChatterboxMultilingualTTS.from_pretrained(device=APPAREIL)
 
-            # Compression "int8" du transformeur (la partie qui lit le texte) :
-            # ~1.8x plus rapide, la voix reste quasiment aussi ressemblante.
-            torch.ao.quantization.quantize_dynamic(
-                modele.t3.tfmr, {torch.nn.Linear}, dtype=torch.qint8, inplace=True
-            )
+            if not SUR_GPU:
+                # Compression "int8" du transformeur (la partie qui lit le texte) :
+                # ~1.8x plus rapide sur CPU, la voix reste quasiment aussi ressemblante.
+                # (Cette compression ne fonctionne que sur CPU : sur GPU, on n'en a pas besoin.)
+                torch.ao.quantization.quantize_dynamic(
+                    modele.t3.tfmr, {torch.nn.Linear}, dtype=torch.qint8, inplace=True
+                )
 
             # Chatterbox ne permet pas de choisir le nombre d'etapes du son dans generate() :
             # on "enveloppe" sa fonction pour lui passer notre reglage.

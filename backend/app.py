@@ -2,9 +2,11 @@
 
 Securite (voir SECURITE.md) : application locale, sans compte.
 Elle n'ecoute que sur 127.0.0.1 et refuse les requetes venant d'autres sites.
+Version GPU sur Colab : joignable par un tunnel, chaque requete doit alors porter le jeton secret.
 """
 
 import gc
+import hmac
 import io
 import os
 import queue
@@ -19,7 +21,7 @@ import soundfile as sf
 from flask import Flask, jsonify, request, send_file
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
-from moteur import ETAPES_SON, LANGUES, Moteur, decouper_texte
+from moteur import ETAPES_SON, LANGUES, SUR_GPU, Moteur, decouper_texte
 from preparation import conseils, mesurer, preparer
 
 DOSSIER = Path(__file__).parent
@@ -37,12 +39,38 @@ MAX_TACHES_GARDEES = 20  # on oublie les plus anciennes
 
 # Seuls ces noms d'hote sont acceptes (empeche le "DNS rebinding" : un site pirate
 # qui ferait pointer son propre nom de domaine vers 127.0.0.1)
-HOTES_AUTORISES = {"127.0.0.1:5000", "localhost:5000", "127.0.0.1:5173", "localhost:5173"}
+HOTES_LOCAUX = {"127.0.0.1:5000", "localhost:5000", "127.0.0.1:5173", "localhost:5173"}
 # Les requetes POST doivent porter cet en-tete. Un autre site ouvert dans ton navigateur
 # ne peut pas l'ajouter sans autorisation CORS (que ce serveur ne donne jamais).
 ENTETE_ANTI_SITES = "X-Ma-Voix"
+# Version GPU (Colab) : le serveur est joignable depuis Internet par un tunnel.
+# Chaque requete doit alors porter le jeton secret dans cet en-tete (jamais dans l'URL).
+ENTETE_JETON = "X-Ma-Voix-Jeton"
+FORMAT_JETON = re.compile(r"^[A-Za-z0-9_-]{32,256}$")  # secrets.token_urlsafe(32) = 43 caracteres
+FORMAT_HOTE = re.compile(r"^[a-z0-9.-]+(:\d{1,5})?$")
 
 FORMAT_NOM_SORTIE = re.compile(r"^message_\d{8}_\d{6}\.wav$")
+
+
+def lire_configuration(environ):
+    """Lit le mode "a distance" dans les variables d'environnement (voir SECURITE.md, MV-7) :
+    - MA_VOIX_HOTES : noms d'hote en plus des hotes locaux, separes par des virgules
+      (l'adresse du tunnel, par exemple "abc-def.trycloudflare.com") ;
+    - MA_VOIX_JETON : jeton secret exige sur chaque requete.
+    Refuse de demarrer si un hote en plus est donne sans jeton solide."""
+    hotes = {h.strip().lower() for h in environ.get("MA_VOIX_HOTES", "").split(",") if h.strip()}
+    jeton = environ.get("MA_VOIX_JETON") or None
+    for hote in hotes:
+        if not FORMAT_HOTE.fullmatch(hote):
+            raise RuntimeError(f"MA_VOIX_HOTES : nom d'hote invalide : {hote!r}")
+    if jeton is not None and not FORMAT_JETON.fullmatch(jeton):
+        raise RuntimeError("MA_VOIX_JETON doit faire au moins 32 caracteres (lettres, chiffres, - et _).")
+    if hotes and jeton is None:
+        raise RuntimeError("MA_VOIX_HOTES rend le serveur joignable de l'exterieur : MA_VOIX_JETON est obligatoire.")
+    return HOTES_LOCAUX | hotes, jeton
+
+
+HOTES_AUTORISES, JETON = lire_configuration(os.environ)
 
 app = Flask(__name__)
 # VAL-4 : taille maximale d'une requete. 8 Mo au lieu de 1 Mo, car un echantillon de voix
@@ -83,6 +111,11 @@ def ouvrier():
 def refuser_les_autres_sites():
     if request.host not in HOTES_AUTORISES:
         return jsonify(erreur="Hote non autorise."), 403
+    # WH-1 : comparaison en temps constant (jamais == pour un secret)
+    if JETON is not None and not hmac.compare_digest(
+        request.headers.get(ENTETE_JETON, "").encode(), JETON.encode()
+    ):
+        return jsonify(erreur="Jeton manquant ou invalide."), 403
     if request.method == "POST" and request.headers.get(ENTETE_ANTI_SITES) != "1":
         return jsonify(erreur="Requete refusee."), 403
 
@@ -108,6 +141,7 @@ def statut():
         if moteur.erreur else None,
         voix_enregistree=FICHIER_VOIX.exists(),
         langues=LANGUES,
+        gpu=SUR_GPU,
     )
 
 
@@ -257,7 +291,10 @@ if __name__ == "__main__":
     # Le modele met du temps a charger : on demarre l'ouvrier en arriere-plan
     # pour que le serveur reponde tout de suite.
     threading.Thread(target=ouvrier, daemon=True).start()
+    if JETON is not None:
+        print(f"[app] Jeton secret exige. Hotes en plus : {sorted(HOTES_AUTORISES - HOTES_LOCAUX) or 'aucun'}")
     # AUTH-8 : mode debug seulement si on le demande (MA_VOIX_DEBUG=1).
-    # 127.0.0.1 : le serveur n'est joignable que depuis ce PC, jamais depuis le reseau.
+    # 127.0.0.1 : le serveur n'est joignable que depuis cette machine, jamais depuis le reseau
+    # (sur Colab, seul le tunnel, lance sur la meme machine, peut l'atteindre).
     # use_reloader=False : sinon Flask chargerait le modele deux fois.
     app.run(host="127.0.0.1", port=5000, debug=os.environ.get("MA_VOIX_DEBUG") == "1", use_reloader=False)
