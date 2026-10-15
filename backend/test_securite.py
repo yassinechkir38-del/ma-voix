@@ -28,9 +28,14 @@ def client(tmp_path, monkeypatch):
         yield c
 
 
-def wav(secondes, frequence=16000):
+def wav(secondes, frequence=16000, parole=True):
+    """Faux enregistrement : 0,8 s de "voix" (sons) puis 0,2 s de pause, en boucle."""
+    t = np.arange(int(secondes * frequence)) / frequence
+    audio = 0.2 * np.sin(2 * np.pi * 150 * t) * ((t % 1.0) < 0.8)
+    if not parole:
+        audio[int(frequence):] = 0  # une seule seconde de son, puis silence
     tampon = io.BytesIO()
-    sf.write(tampon, np.zeros(int(secondes * frequence), dtype=np.float32), frequence, format="WAV")
+    sf.write(tampon, audio.astype(np.float32), frequence, format="WAV")
     tampon.seek(0)
     return tampon
 
@@ -114,11 +119,20 @@ def test_voix_trop_grosse(client):
     assert client.post("/api/voix", data=donnees, headers=ENTETES).status_code == 413
 
 
+def test_voix_presque_muette(client):
+    # 10 s d'enregistrement mais 1 s de parole : refuse apres nettoyage, avec des conseils
+    donnees = {"audio": (wav(10, parole=False), "voix.wav")}
+    reponse = client.post("/api/voix", data=donnees, headers=ENTETES)
+    assert reponse.status_code == 400
+    assert reponse.get_json()["conseils"]
+
+
 def test_voix_valide(client):
-    donnees = {"audio": (wav(10), "voix.wav")}
+    donnees = {"audio": (wav(12), "voix.wav")}
     reponse = client.post("/api/voix", data=donnees, headers=ENTETES)
     assert reponse.status_code == 200
     assert module_app.FICHIER_VOIX.exists()
+    assert {"volume_db", "signal_bruit_db", "duree_parole"} <= reponse.get_json()["mesures"].keys()
 
 
 # --- GET /api/sorties/<nom> : pas d'acces aux autres fichiers -----------------------------

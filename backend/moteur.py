@@ -3,6 +3,7 @@
 import gc
 import re
 
+import librosa
 import numpy as np
 import torch
 
@@ -19,7 +20,11 @@ LONGUEUR_PREMIER_MORCEAU = 60
 # - 4 threads = tes 4 coeurs physiques (8 ne va pas plus vite)
 # - etapes de generation du son : 5 = 2x plus rapide que 10, difference quasi inaudible
 NB_THREADS = 4
-ETAPES_SON = {"rapide": 5, "max": 10}
+# Pour chaque mode de qualite : etapes de generation du son, et nombre d'essais par phrase.
+# En "precision", on genere plusieurs versions de chaque phrase et on garde celle qui
+# ressemble le plus a ta voix (mesure par l'empreinte vocale du modele).
+ETAPES_SON = {"rapide": 5, "max": 10, "precision": 10}
+ESSAIS = {"rapide": 1, "max": 1, "precision": 3}
 
 
 class Moteur:
@@ -77,8 +82,26 @@ class Moteur:
             self.voix_chargee = chemin_voix
 
         for morceau in morceaux:
-            wav = self.modele.generate(morceau, language_id=langue, exaggeration=expressivite)
-            yield wav.squeeze(0).numpy()
+            meilleur, meilleure_ressemblance = None, -1.0
+            for essai in range(ESSAIS[qualite]):
+                audio = self.modele.generate(
+                    morceau, language_id=langue, exaggeration=expressivite
+                ).squeeze(0).numpy()
+                if ESSAIS[qualite] == 1:
+                    meilleur = audio
+                    break
+                ressemblance = self.ressemblance(audio)
+                print(f"[moteur] essai {essai + 1}/{ESSAIS[qualite]} : ressemblance {ressemblance:.3f}")
+                if ressemblance > meilleure_ressemblance:
+                    meilleur, meilleure_ressemblance = audio, ressemblance
+            yield meilleur
+
+    def ressemblance(self, audio):
+        """Compare l'empreinte vocale d'un audio genere a celle de ton echantillon (1 = identique)."""
+        audio_16k = librosa.resample(audio, orig_sr=self.frequence, target_sr=16000)
+        empreinte = self.modele.ve.embeds_from_wavs([audio_16k], sample_rate=16000).mean(axis=0)
+        reference = self.modele.conds.t3.speaker_emb[0].cpu().numpy()
+        return float(np.dot(empreinte, reference) / (np.linalg.norm(empreinte) * np.linalg.norm(reference)))
 
     def assembler(self, audios):
         """Colle les morceaux audio avec une petite pause entre chacun."""

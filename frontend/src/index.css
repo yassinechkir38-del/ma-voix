@@ -354,3 +354,45 @@ input[type='range'] {
 .progression + audio {
   margin-top: 10px;
 }
+
+.vumetre {
+  flex: 1;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vumetre-barre {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--bordure);
+  overflow: hidden;
+}
+
+.vumetre-niveau {
+  height: 100%;
+  transition: width 0.1s;
+}
+
+.vumetre-niveau.faible {
+  background: var(--danger);
+}
+
+.vumetre-niveau.bon {
+  background: #2fb36b;
+}
+
+.vumetre-niveau.fort {
+  background: #f0a020;
+}
+
+.message.attention {
+  background: var(--att-fond);
+  color: var(--att-texte);
+  padding-left: 32px;
+}
+
+.message.attention li + li {
+  margin-top: 4px;
+}

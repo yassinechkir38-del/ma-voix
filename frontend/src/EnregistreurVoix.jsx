@@ -15,9 +15,12 @@ export default function EnregistreurVoix({ voixEnregistree, onVoixEnregistree })
   const [consentement, setConsentement] = useState(false)
   const [message, setMessage] = useState(null) // { type: 'ok' | 'erreur', texte }
   const [versionVoix, setVersionVoix] = useState(Date.now())
+  const [niveau, setNiveau] = useState(-100) // volume du micro en direct (dB)
+  const [conseils, setConseils] = useState([])
 
   const enregistreurRef = useRef(null)
   const minuterieRef = useRef(null)
+  const vumetreRef = useRef(null) // { contexte, animation }
 
   // Arret automatique a DUREE_MAX secondes
   useEffect(() => {
@@ -25,14 +28,53 @@ export default function EnregistreurVoix({ voixEnregistree, onVoixEnregistree })
   }, [secondes, etat])
 
   // Nettoyage si on quitte la page pendant un enregistrement
-  useEffect(() => () => clearInterval(minuterieRef.current), [])
+  useEffect(
+    () => () => {
+      clearInterval(minuterieRef.current)
+      arreterVumetre()
+    },
+    [],
+  )
+
+  // Vu-metre : mesure le volume du micro plusieurs fois par seconde
+  function demarrerVumetre(flux) {
+    const contexte = new AudioContext()
+    const analyseur = contexte.createAnalyser()
+    analyseur.fftSize = 2048
+    contexte.createMediaStreamSource(flux).connect(analyseur)
+    const echantillons = new Float32Array(analyseur.fftSize)
+    let lisse = -100
+    let derniereMaj = 0
+    const mesurer = (instant) => {
+      analyseur.getFloatTimeDomainData(echantillons)
+      const rms = Math.sqrt(echantillons.reduce((somme, x) => somme + x * x, 0) / echantillons.length)
+      const db = 20 * Math.log10(rms + 1e-9)
+      lisse = Math.max(db, lisse - 1.5) // monte vite, redescend doucement
+      if (instant - derniereMaj > 100) {
+        setNiveau(lisse)
+        derniereMaj = instant
+      }
+      vumetreRef.current.animation = requestAnimationFrame(mesurer)
+    }
+    vumetreRef.current = { contexte, animation: requestAnimationFrame(mesurer) }
+  }
+
+  function arreterVumetre() {
+    if (!vumetreRef.current) return
+    cancelAnimationFrame(vumetreRef.current.animation)
+    vumetreRef.current.contexte.close()
+    vumetreRef.current = null
+  }
 
   async function demarrer() {
     setMessage(null)
+    setConseils([])
     let flux
     try {
+      // Volume automatique + reduction de bruit du navigateur : la voix arrive
+      // assez forte et propre (le serveur la nettoie encore apres)
       flux = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, autoGainControl: false },
+        audio: { channelCount: 1, echoCancellation: false, noiseSuppression: true, autoGainControl: true },
       })
     } catch {
       setMessage({ type: 'erreur', texte: "Impossible d'accéder au micro. Autorise-le dans le navigateur." })
@@ -43,11 +85,13 @@ export default function EnregistreurVoix({ voixEnregistree, onVoixEnregistree })
     const enregistreur = new MediaRecorder(flux)
     enregistreur.ondataavailable = (e) => morceaux.push(e.data)
     enregistreur.onstop = async () => {
+      arreterVumetre()
       flux.getTracks().forEach((piste) => piste.stop())
       preparerApercu(await convertirEnWav(new Blob(morceaux, { type: enregistreur.mimeType })))
     }
     enregistreur.start()
     enregistreurRef.current = enregistreur
+    demarrerVumetre(flux)
 
     setSecondes(0)
     setEtat('enregistrement')
@@ -88,8 +132,9 @@ export default function EnregistreurVoix({ voixEnregistree, onVoixEnregistree })
         body: formulaire,
       })
       const donnees = await reponse.json()
+      setConseils(donnees.conseils ?? [])
       if (!reponse.ok) throw new Error(donnees.erreur)
-      setMessage({ type: 'ok', texte: `${donnees.message} (${donnees.duree} s)` })
+      setMessage({ type: 'ok', texte: `${donnees.message} (${donnees.duree} s de parole gardées)` })
       URL.revokeObjectURL(apercu.url)
       setApercu(null)
       setEtat('repos')
@@ -109,7 +154,8 @@ export default function EnregistreurVoix({ voixEnregistree, onVoixEnregistree })
         <span className="numero">1</span> Ta voix
       </h2>
       <p className="aide">
-        Enregistre-toi pendant 10 à 20 secondes, au calme, en lisant ce texte à voix haute :
+        Enregistre-toi pendant 10 à 20 secondes, au calme, à environ 20 cm du micro.{' '}
+        <strong>Commence à lire dès que tu cliques</strong>, d'une voix naturelle :
       </p>
       <blockquote>{TEXTE_A_LIRE}</blockquote>
 
@@ -121,6 +167,7 @@ export default function EnregistreurVoix({ voixEnregistree, onVoixEnregistree })
           <span className="enregistrement">
             <span className="point-rouge" /> {secondes} s / {DUREE_MAX} s
           </span>
+          <Vumetre niveau={niveau} />
         </div>
       ) : (
         <div className="ligne">
@@ -162,10 +209,17 @@ export default function EnregistreurVoix({ voixEnregistree, onVoixEnregistree })
       )}
 
       {message && <p className={`message ${message.type}`}>{message.texte}</p>}
+      {conseils.length > 0 && (
+        <ul className="message attention">
+          {conseils.map((conseil) => (
+            <li key={conseil}>{conseil}</li>
+          ))}
+        </ul>
+      )}
 
       {voixEnregistree && !apercu && (
         <div className="apercu">
-          <p>✅ Voix actuelle :</p>
+          <p>✅ Voix actuelle (nettoyée : sans silences ni souffle) :</p>
           <audio controls src={`/api/voix?v=${versionVoix}`} />
         </div>
       )}
@@ -173,3 +227,17 @@ export default function EnregistreurVoix({ voixEnregistree, onVoixEnregistree })
   )
 }
 
+// Barre de volume : rouge = trop faible, vert = bien, orange = trop fort
+function Vumetre({ niveau }) {
+  const pourcentage = Math.max(0, Math.min(100, ((niveau + 60) / 60) * 100))
+  const etat = niveau < -40 ? 'faible' : niveau > -6 ? 'fort' : 'bon'
+  const texte = { faible: 'Parle plus fort / rapproche-toi', bon: 'Bon volume', fort: 'Un peu trop fort' }
+  return (
+    <div className="vumetre">
+      <div className="vumetre-barre">
+        <div className={`vumetre-niveau ${etat}`} style={{ width: `${pourcentage}%` }} />
+      </div>
+      <small>{texte[etat]}</small>
+    </div>
+  )
+}

@@ -25,7 +25,9 @@ avec Chatterbox ; la page joue chaque phrase des qu'elle arrive, sans attendre l
   sans entraînement.
 - **Backend** (`backend/`) :
   - `app.py` — l'API Flask (statut, enregistrement de la voix, génération).
-  - `moteur.py` — charge le modèle, découpe les textes en phrases, colle les morceaux audio.
+  - `moteur.py` — charge le modèle, découpe les textes en phrases, colle les morceaux audio,
+    et en mode « Précision maximale » garde la version la plus ressemblante.
+  - `preparation.py` — nettoie ton enregistrement (silences, souffle, volume) et mesure sa qualité.
 - **Frontend** (`frontend/src/`) :
   - `EnregistreurVoix.jsx` — enregistrement au micro (ou import d'un fichier), écoute, envoi.
   - `GenerateurMessage.jsx` — zone de texte, langue, expressivité, lecteur + téléchargement.
@@ -70,7 +72,7 @@ Mesuré sur ce PC (i7-8550U, 8 Go de RAM), pour une phrase de 6 secondes :
 | + transformeur compressé en **int8** | ~115 s |
 | + son généré en **5 étapes** au lieu de 10 (mode « Rapide ») | **~50 s** |
 
-La ressemblance de la voix reste quasi identique (0,93 → 0,92). Le mode « Qualité maximale »
+La ressemblance de la voix reste quasi identique (0,93 → 0,92). Le mode « Haute qualité »
 de la page repasse à 10 étapes. Tester 8 threads au lieu de 4, ou compresser aussi la partie
 « son » (`s3gen`), n'a rien fait gagner.
 
@@ -78,9 +80,37 @@ de la page repasse à 10 étapes. Tester 8 threads au lieu de 4, ou compresser a
 le chargement). Avec 8 Go, ferme Chrome et les autres applis lourdes pendant que tu l'utilises :
 si Windows manque de RAM, tout devient 2 à 3 fois plus lent.
 
+## Pourquoi ton enregistrement est nettoyé
+
+Le modèle n'écoute que les **6 à 10 premières secondes** de ton échantillon. S'il y a du silence
+ou du souffle dedans, il copie le bruit au lieu de ta voix et le résultat sonne « robot ».
+Le serveur nettoie donc chaque enregistrement (`preparation.py`) :
+
+1. coupe les très basses fréquences (bruits de bureau) ;
+2. réduit le bruit de fond constant (ventilateur, souffle du micro) ;
+3. retire les silences, pour que le début soit rempli de parole ;
+4. met la voix à un volume normal (-20 LUFS).
+
+Mesuré sur un vrai enregistrement (volume -48 dB, 28 % de parole dans les 6 premières secondes) :
+la ressemblance de la voix générée passe de **0,77 à 0,81–0,87**.
+
+## Modes de qualité
+
+| Mode | Ce qu'il fait | Temps (phrase de 8 s) |
+|---|---|---|
+| Rapide | son en 5 étapes, 1 essai | ~1 min 30 |
+| Haute qualité | son en 10 étapes, 1 essai | ~2 min |
+| Précision maximale | 10 étapes, **3 essais par phrase**, garde le plus ressemblant | ~8 min |
+
+D'un essai à l'autre, la ressemblance varie (0,81 à 0,87 sur le même texte) : la précision
+maximale évite les mauvais tirages.
+
 ## Conseils pour un bon clonage
 
 - Enregistre-toi **au calme**, sans musique ni ventilateur, à ~20 cm du micro.
+- **Commence à parler dès que tu cliques** : les premières secondes comptent le plus.
+- Surveille la **barre de volume** pendant l'enregistrement : elle doit rester verte.
+- Après l'envoi, lis les conseils affichés et recommence si ta voix était trop faible ou bruitée.
 - Parle **naturellement**, avec le ton que tu veux retrouver dans les messages.
 - 10 à 20 secondes suffisent (le modèle n'utilise que les 10 premières).
 - **Expressivité** : 0.5 = naturel ; plus haut = plus d'émotion (mais parfois moins stable).

@@ -129,8 +129,9 @@ export default function GenerateurMessage({ langues, actif }) {
         <label>
           Qualité
           <select value={qualite} onChange={(e) => setQualite(e.target.value)}>
-            <option value="rapide">Rapide (recommandé)</option>
-            <option value="max">Maximale (2× plus lent)</option>
+            <option value="rapide">Rapide</option>
+            <option value="max">Haute qualité (~1,5× plus lent)</option>
+            <option value="precision">Précision maximale (~5× plus lent)</option>
           </select>
         </label>
         <label>

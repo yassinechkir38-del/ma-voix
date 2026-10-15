@@ -19,7 +19,8 @@ import soundfile as sf
 from flask import Flask, jsonify, request, send_file
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
-from moteur import LANGUES, Moteur, decouper_texte
+from moteur import ETAPES_SON, LANGUES, Moteur, decouper_texte
+from preparation import conseils, mesurer, preparer
 
 DOSSIER = Path(__file__).parent
 DOSSIER_VOIX = DOSSIER / "voix"
@@ -64,7 +65,7 @@ class DemandeGeneration(BaseModel):
     texte: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=LONGUEUR_MAX_TEXTE)]
     langue: Literal[tuple(LANGUES)] = "fr"
     expressivite: float = Field(default=0.5, ge=0.25, le=2.0)
-    qualite: Literal["rapide", "max"] = "rapide"
+    qualite: Literal[tuple(ETAPES_SON)] = "rapide"
 
 
 def ouvrier():
@@ -116,26 +117,43 @@ def enregistrer_voix():
     if fichier is None:
         return jsonify(erreur="Aucun fichier audio recu.", champs=["audio"]), 400
 
-    temporaire = DOSSIER_VOIX / "nouvelle_voix.wav"
-    fichier.save(temporaire)
+    donnees = fichier.read()
     try:
-        infos = sf.info(temporaire)
-        if infos.format != "WAV":
+        if sf.info(io.BytesIO(donnees)).format != "WAV":
             raise ValueError("pas un WAV")
+        audio, frequence = sf.read(io.BytesIO(donnees), dtype="float32")
     except Exception:
-        temporaire.unlink(missing_ok=True)
         return jsonify(erreur="Fichier audio illisible (WAV attendu).", champs=["audio"]), 400
 
-    if not DUREE_MIN_VOIX <= infos.duration <= DUREE_MAX_VOIX:
-        temporaire.unlink()
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)  # stereo -> mono
+    duree = len(audio) / frequence
+    if not DUREE_MIN_VOIX <= duree <= DUREE_MAX_VOIX:
         return jsonify(
             erreur=f"L'enregistrement doit durer entre {DUREE_MIN_VOIX} et {DUREE_MAX_VOIX} secondes.",
             champs=["audio"],
         ), 400
 
-    temporaire.replace(FICHIER_VOIX)
+    # Controle de qualite de l'enregistrement d'origine, puis nettoyage
+    # (silences retires, souffle reduit, volume corrige) : voir preparation.py
+    mesures = mesurer(audio, frequence)
+    propre = preparer(audio, frequence)
+    duree_propre = len(propre) / frequence
+    if duree_propre < DUREE_MIN_VOIX:
+        return jsonify(
+            erreur="Pas assez de parole audible dans l'enregistrement.",
+            champs=["audio"],
+            conseils=conseils(mesures),
+        ), 400
+
+    sf.write(FICHIER_VOIX, propre, frequence)
     moteur.voix_chargee = None  # la prochaine generation analysera la nouvelle voix
-    return jsonify(message="Voix enregistree !", duree=round(infos.duration, 1))
+    return jsonify(
+        message="Voix enregistree et nettoyee !",
+        duree=round(duree_propre, 1),
+        mesures=mesures,
+        conseils=conseils(mesures),
+    )
 
 
 @app.get("/api/voix")
