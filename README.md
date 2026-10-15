@@ -101,3 +101,5 @@ npm install
 
 Clone uniquement **ta propre voix** (ou celle d'une personne qui a donné son accord).
 Chaque audio généré contient un filigrane inaudible (Perth) qui permet de le reconnaître comme synthétique.
+
+Règles de sécurité du code (routes, formulaire, tests) : voir [SECURITE.md](SECURITE.md).

@@ -1,3 +1,18 @@
 # Ta voix et les messages generes restent sur ton PC
 backend/voix/
 backend/sorties/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node / React
+node_modules/
+dist/
+
+# Outils / config locale
+.claude/
+.vscode/
+.env

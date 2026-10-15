@@ -1,6 +1,6 @@
 """API Flask de "ma-voix" : enregistre ta voix et transforme du texte en message vocal.
 
-Securite (voir securite.md, section "ma-voix") : application locale, sans compte.
+Securite (voir SECURITE.md) : application locale, sans compte.
 Elle n'ecoute que sur 127.0.0.1 et refuse les requetes venant d'autres sites.
 """
 
